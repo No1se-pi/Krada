@@ -1,0 +1,22 @@
+{
+	"nodes":[
+		{"id":"333e9a44b7a400e2","x":-223,"y":-185,"width":250,"height":60,"type":"text","text":"меню\n"},
+		{"id":"d31c74208d65f28a","x":-600,"y":0,"width":250,"height":60,"type":"text","text":"Деревня\n"},
+		{"id":"a8da36232418e14b","x":-60,"y":60,"width":250,"height":60,"type":"text","text":"Рейды"},
+		{"id":"9b9c7f54210db45f","x":199,"y":-53,"width":250,"height":60,"type":"text","text":"Настройки \\ остальное"},
+		{"id":"92bc428956b29980","x":-1020,"y":0,"width":160,"height":120,"type":"text","text":"Ратушка\nКузница\nЦерковь"},
+		{"id":"c91e442129bbc946","x":-400,"y":160,"width":250,"height":60,"type":"text","text":"Персонаж\n"},
+		{"id":"c050f25a53f0e51c","x":-985,"y":-245,"width":165,"height":60,"type":"text","text":"Рейтинг\nТематический\n"},
+		{"id":"33dc165d5efabf67","x":-880,"y":280,"width":250,"height":50,"type":"text","text":"Ресурсы\n"}
+	],
+	"edges":[
+		{"id":"c75c7672542874b2","fromNode":"333e9a44b7a400e2","fromSide":"bottom","toNode":"d31c74208d65f28a","toSide":"top"},
+		{"id":"08d98f57cd505437","fromNode":"333e9a44b7a400e2","fromSide":"bottom","toNode":"c91e442129bbc946","toSide":"top"},
+		{"id":"50ecce82892b4180","fromNode":"333e9a44b7a400e2","fromSide":"bottom","toNode":"a8da36232418e14b","toSide":"top"},
+		{"id":"b2b2f799063dbd1a","fromNode":"333e9a44b7a400e2","fromSide":"bottom","toNode":"9b9c7f54210db45f","toSide":"top"},
+		{"id":"6ceed40ca3d644b6","fromNode":"d31c74208d65f28a","fromSide":"bottom","toNode":"92bc428956b29980","toSide":"right"},
+		{"id":"93c7ddfbd3c17068","fromNode":"a8da36232418e14b","fromSide":"bottom","toNode":"33dc165d5efabf67","toSide":"right"},
+		{"id":"ab19891bb64006ba","fromNode":"33dc165d5efabf67","fromSide":"top","toNode":"92bc428956b29980","toSide":"bottom"},
+		{"id":"337007d9e0ca623b","fromNode":"d31c74208d65f28a","fromSide":"left","toNode":"c050f25a53f0e51c","toSide":"right"}
+	]
+}
