@@ -1,8 +1,10 @@
+import re
 import time
 import uuid
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -31,9 +33,46 @@ app.add_middleware(
 app.include_router(router)
 
 
+@app.exception_handler(HTTPException)
+async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
+    """Normalize deliberate API failures without exposing internal exception text."""
+    detail: dict[str, object] = exc.detail if isinstance(exc.detail, dict) else {}
+    raw_code = detail.get("code")
+    raw_message = detail.get("message")
+    code = raw_code if isinstance(raw_code, str) else f"http_{exc.status_code}"
+    message = raw_message if isinstance(raw_message, str) else str(exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": {"code": code, "message": message}},
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    """Return field locations and error types, never rejected values or request bodies."""
+    fields = [{"location": list(error["loc"]), "type": error["type"]} for error in exc.errors()]
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": {
+                "code": "validation_error",
+                "message": "Проверьте введённые данные",
+                "fields": fields,
+            }
+        },
+    )
+
+
 @app.middleware("http")
 async def request_context(request: Request, call_next):
-    request_id = request.headers.get("x-request-id", str(uuid.uuid4()))[:64]
+    supplied_request_id = request.headers.get("x-request-id", "")
+    # Restrict untrusted IDs before putting them into logs and downstream event correlation.
+    request_id = (
+        supplied_request_id
+        if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", supplied_request_id)
+        else str(uuid.uuid4())
+    )
     started = time.perf_counter()
     try:
         response = await call_next(request)
@@ -47,6 +86,7 @@ async def request_context(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     log.info(
         "request",
         request_id=request_id,
@@ -69,7 +109,9 @@ def ready():
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         return {"status": "ready", "database": "ok"}
-    except Exception:
+    except Exception as exc:
+        # Only the exception class is logged: connection strings may contain credentials.
+        log.warning("readiness_failed", error_type=type(exc).__name__)
         return JSONResponse(
             status_code=503, content={"status": "not_ready", "database": "unavailable"}
         )

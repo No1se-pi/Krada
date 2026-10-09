@@ -29,6 +29,13 @@ class Settings(BaseSettings):
                 raise ValueError("Mock authentication must be disabled in production")
             if len(self.session_secret) < 32 or "change-me" in self.session_secret:
                 raise ValueError("A strong SESSION_SECRET is required in production")
+            if not self.max_bot_token:
+                raise ValueError("MAX_BOT_TOKEN is required in production")
+            if not self.cors_origin_list or any(
+                origin == "*" or not origin.startswith("https://")
+                for origin in self.cors_origin_list
+            ):
+                raise ValueError("Production CORS origins must be explicit HTTPS origins")
         return self
 
 

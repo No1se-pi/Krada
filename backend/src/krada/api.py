@@ -8,6 +8,8 @@ from krada.auth import Principal, current_principal, issue_token, validate_max_i
 from krada.config import Settings, get_settings
 from krada.database import get_db
 from krada.models import Character, Raid, School, SchoolClass, User, Wallet
+from krada.modules.content.domain import require_question
+from krada.modules.raids.domain import RaidState
 from krada.schemas import (
     AnswerIn,
     CharacterIn,
@@ -20,18 +22,27 @@ from krada.schemas import (
     RaidResultOut,
     SessionOut,
 )
-from krada.service import QUESTION, bootstrap_user, complete_raid, create_character, start_raid
+from krada.service import bootstrap_user, complete_raid, create_character, start_raid
 
 router = APIRouter(prefix="/api/v1")
 
 
 def session_for(user: User, settings: Settings) -> SessionOut:
+    """Build the only response that exposes a newly issued bearer token."""
     return SessionOut(
         access_token=issue_token(user.id, user.school_id, user.role, settings),
         user_id=user.id,
         school_id=user.school_id,
         display_name=user.display_name,
     )
+
+
+def raid_out(raid: Raid) -> RaidOut:
+    """Project raid state without leaking answer metadata before evaluation."""
+    question = None
+    if raid.state == RaidState.ACTIVE:
+        question = QuestionOut(**require_question(raid.question_key).public_view())
+    return RaidOut(id=raid.id, state=raid.state, score=raid.score, question=question)
 
 
 @router.post("/auth/mock", response_model=SessionOut)
@@ -55,10 +66,15 @@ def max_login(
             401, detail={"code": "invalid_max_data", "message": "Не удалось подтвердить запуск MAX"}
         ) from exc
     max_user = parsed["user"]
-    display_name = (
-        " ".join(filter(None, [max_user.get("first_name"), max_user.get("last_name")]))
-        or "Странник"
-    )
+    # Platform profile fields are signed but may still be absent or have unexpected optional
+    # values. Build a bounded display value instead of letting malformed presentation data fail
+    # an otherwise valid authentication flow.
+    name_parts = [
+        value.strip()
+        for key in ("first_name", "last_name")
+        if isinstance((value := max_user.get(key)), str) and value.strip()
+    ]
+    display_name = (" ".join(name_parts) or "Странник")[:80]
     return session_for(bootstrap_user(db, display_name, "max", str(max_user["id"])), settings)
 
 
@@ -66,40 +82,57 @@ def max_login(
 def dashboard(
     principal: Principal = Depends(current_principal), db: Session = Depends(get_db)
 ) -> DashboardOut:
-    user = db.scalar(
-        select(User).where(User.id == principal.user_id, User.school_id == principal.school_id)
-    )
+    school_id = principal.tenant.school_id
+    user = db.scalar(select(User).where(User.id == principal.user_id, User.school_id == school_id))
     if not user:
         raise HTTPException(404, "User not found")
     character = db.scalar(
-        select(Character).where(
-            Character.user_id == user.id, Character.school_id == principal.school_id
-        )
+        select(Character).where(Character.user_id == user.id, Character.school_id == school_id)
     )
     wallet = (
         db.scalar(
-            select(Wallet).where(
-                Wallet.character_id == character.id, Wallet.school_id == principal.school_id
-            )
+            select(Wallet).where(Wallet.character_id == character.id, Wallet.school_id == school_id)
         )
         if character
         else None
     )
     school_score = (
-        db.scalar(
-            select(func.coalesce(func.sum(Raid.score), 0)).where(
-                Raid.school_id == principal.school_id
-            )
-        )
+        db.scalar(select(func.coalesce(func.sum(Raid.score), 0)).where(Raid.school_id == school_id))
         or 0
     )
+    school = db.scalar(select(School).where(School.id == user.school_id))
+    school_class = db.scalar(
+        select(SchoolClass).where(
+            SchoolClass.id == user.class_id,
+            SchoolClass.school_id == school_id,
+        )
+    )
+    if not school or not school_class:
+        raise HTTPException(409, "Membership is inconsistent")
+    active_raid = (
+        db.scalar(
+            select(Raid)
+            .where(
+                Raid.school_id == school_id,
+                Raid.character_id == character.id,
+                Raid.state == RaidState.ACTIVE,
+            )
+            .order_by(Raid.created_at.desc())
+        )
+        if character
+        else None
+    )
+    active_raid_out = None
+    if active_raid:
+        active_raid_out = raid_out(active_raid)
     return DashboardOut(
         display_name=user.display_name,
-        school_name=db.get(School, user.school_id).name,
-        class_name=db.get(SchoolClass, user.class_id).name,
+        school_name=school.name,
+        class_name=school_class.name,
         character=CharacterOut.model_validate(character) if character else None,
         embers=wallet.balance if wallet else 0,
         school_score=school_score,
+        active_raid=active_raid_out,
     )
 
 
@@ -117,37 +150,54 @@ def list_classes() -> list[dict]:
 def new_character(
     data: CharacterIn,
     response: Response,
+    idempotency_key: str = Header(min_length=8, max_length=128),
+    x_request_id: str | None = Header(None),
     principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ) -> Character:
-    existing = db.scalar(
-        select(Character).where(
-            Character.user_id == principal.user_id, Character.school_id == principal.school_id
-        )
+    # The header is required even though the one-character invariant currently provides semantic
+    # idempotency; keeping the API contract now avoids a breaking change for future character slots.
+    _ = idempotency_key
+    character, created = create_character(
+        db,
+        principal,
+        data.name,
+        data.class_key,
+        x_request_id or str(uuid.uuid4()),
     )
-    if existing:
+    if not created:
         response.status_code = 200
-        return existing
-    return create_character(db, principal, data.name, data.class_key)
+    return character
 
 
 @router.post("/raids", response_model=RaidOut, status_code=201)
 def new_raid(
+    response: Response,
+    idempotency_key: str = Header(min_length=8, max_length=128),
     x_request_id: str | None = Header(None),
     principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ) -> RaidOut:
     character = db.scalar(
         select(Character).where(
-            Character.user_id == principal.user_id, Character.school_id == principal.school_id
+            Character.user_id == principal.user_id,
+            Character.school_id == principal.tenant.school_id,
         )
     )
     if not character:
         raise HTTPException(
             409, detail={"code": "character_required", "message": "Сначала создайте героя"}
         )
-    raid = start_raid(db, principal, character, x_request_id or str(uuid.uuid4()))
-    return RaidOut(id=raid.id, state=raid.state, score=raid.score, question=QuestionOut(**QUESTION))
+    raid, created = start_raid(
+        db,
+        principal,
+        character,
+        idempotency_key,
+        x_request_id or str(uuid.uuid4()),
+    )
+    if not created:
+        response.status_code = 200
+    return raid_out(raid)
 
 
 @router.get("/raids/{raid_id}", response_model=RaidOut)
@@ -156,11 +206,15 @@ def get_raid(
     principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ) -> RaidOut:
-    raid = db.scalar(select(Raid).where(Raid.id == raid_id, Raid.school_id == principal.school_id))
+    raid = db.scalar(
+        select(Raid).where(
+            Raid.id == raid_id,
+            Raid.school_id == principal.tenant.school_id,
+        )
+    )
     if not raid:
         raise HTTPException(404, "Raid not found")
-    question = QuestionOut(**QUESTION) if raid.state == "ACTIVE" else None
-    return RaidOut(id=raid.id, state=raid.state, score=raid.score, question=question)
+    return raid_out(raid)
 
 
 @router.post("/raids/{raid_id}/answer", response_model=RaidResultOut)
@@ -182,11 +236,12 @@ def answer_raid(
         raise HTTPException(
             409, detail={"code": str(exc), "message": "Операция уже завершена"}
         ) from exc
+    question = require_question(raid.question_key)
     return RaidResultOut(
         raid_id=raid.id,
         state=raid.state,
         correct=result.correct,
-        explanation="Крещение Руси произошло в 988 году.",
+        explanation=question.explanation,
         score=result.score,
         xp_awarded=result.xp,
         embers_awarded=result.embers,
@@ -210,7 +265,7 @@ def leaderboard(
             "rank": index,
             "school": name,
             "score": score,
-            "is_current": school_id == principal.school_id,
+            "is_current": school_id == principal.tenant.school_id,
         }
         for index, (school_id, name, score) in enumerate(rows, 1)
     ]

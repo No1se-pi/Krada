@@ -5,6 +5,8 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 *.pyc
+*.egg-info/
+*.tsbuildinfo
 node_modules/
 dist/
 coverage/

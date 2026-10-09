@@ -42,3 +42,13 @@ def resolve_answer(answer: str, expected: str) -> RaidResolution:
         xp=40 if correct else 10,
         embers=15 if correct else 3,
     )
+
+
+def activate_new_raid() -> RaidState:
+    """Walk a new solo raid through mandatory setup states.
+
+    The MVP has no interactive lobby, but retaining both transitions prevents the persistence
+    adapter from inventing a shortcut that later conflicts with team raids.
+    """
+    state = transition(RaidState.CREATED, RaidState.LOBBY)
+    return transition(state, RaidState.ACTIVE)

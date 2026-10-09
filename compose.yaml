@@ -19,14 +19,14 @@ services:
     environment: {MINIO_ROOT_USER: krada, MINIO_ROOT_PASSWORD: krada-local-secret}
     volumes: [minio_data:/data]
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      target: development
     env_file: .env
     environment: {DATABASE_URL: postgresql+psycopg://krada:krada@postgres:5432/krada}
     ports: ["8000:8000"]
     depends_on:
       postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
-      rabbitmq: {condition: service_healthy}
   frontend:
     build: ./frontend
     environment: {VITE_API_URL: http://localhost:8000/api/v1}

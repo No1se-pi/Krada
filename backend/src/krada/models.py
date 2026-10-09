@@ -9,16 +9,22 @@ from krada.database import Base
 
 
 class TimestampMixin:
+    """Shared immutable creation timestamp for audit ordering."""
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class School(TimestampMixin, Base):
+    """Tenant root; all operational game data is scoped to one school."""
+
     __tablename__ = "schools"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(160))
 
 
 class SchoolClass(TimestampMixin, Base):
+    """A roster grouping inside a school, not a character class."""
+
     __tablename__ = "school_classes"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     school_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schools.id"), index=True)
@@ -26,6 +32,8 @@ class SchoolClass(TimestampMixin, Base):
 
 
 class User(TimestampMixin, Base):
+    """Application identity with server-assigned membership and role."""
+
     __tablename__ = "users"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     school_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schools.id"), index=True)
@@ -38,6 +46,8 @@ class User(TimestampMixin, Base):
 
 
 class ExternalIdentity(TimestampMixin, Base):
+    """Stable mapping from a validated platform identity to an application user."""
+
     __tablename__ = "external_identities"
     __table_args__ = (UniqueConstraint("provider", "external_id"),)
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -47,6 +57,8 @@ class ExternalIdentity(TimestampMixin, Base):
 
 
 class Character(TimestampMixin, Base):
+    """Player-owned game persona; learning results remain separate."""
+
     __tablename__ = "characters"
     __table_args__ = (UniqueConstraint("user_id"),)
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -60,6 +72,8 @@ class Character(TimestampMixin, Base):
 
 
 class Raid(TimestampMixin, Base):
+    """Authoritative raid state reconstructed by clients after reconnect."""
+
     __tablename__ = "raid_instances"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     school_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schools.id"), index=True)
@@ -68,10 +82,14 @@ class Raid(TimestampMixin, Base):
     question_key: Mapped[str] = mapped_column(String(64))
     score: Mapped[int] = mapped_column(default=0)
     version: Mapped[int] = mapped_column(default=1)
+    # Hash of operation scope + client key. Raw client keys are never persisted or logged.
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), unique=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class QuestionAttempt(TimestampMixin, Base):
+    """Immutable educational attempt and the exact outcome granted for it."""
+
     __tablename__ = "question_attempts"
     __table_args__ = (UniqueConstraint("raid_id", "user_id"),)
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -80,9 +98,15 @@ class QuestionAttempt(TimestampMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     answer: Mapped[str] = mapped_column(String(120))
     correct: Mapped[bool]
+    # Persist awarded values so a retry remains stable after future balance changes.
+    score_awarded: Mapped[int] = mapped_column(default=0)
+    xp_awarded: Mapped[int] = mapped_column(default=0)
+    embers_awarded: Mapped[int] = mapped_column(default=0)
 
 
 class Wallet(TimestampMixin, Base):
+    """Cached balance backed by append-only ledger entries."""
+
     __tablename__ = "wallets"
     __table_args__ = (UniqueConstraint("character_id", "currency"),)
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -93,6 +117,8 @@ class Wallet(TimestampMixin, Base):
 
 
 class LedgerEntry(TimestampMixin, Base):
+    """Auditable resource delta; balances must never change without an entry."""
+
     __tablename__ = "resource_ledger"
     __table_args__ = (UniqueConstraint("idempotency_key"),)
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -104,6 +130,8 @@ class LedgerEntry(TimestampMixin, Base):
 
 
 class OutboxEvent(TimestampMixin, Base):
+    """Event persisted in the same transaction as the state it describes."""
+
     __tablename__ = "outbox_events"
     __table_args__ = (Index("ix_outbox_unpublished", "published_at", "created_at"),)
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

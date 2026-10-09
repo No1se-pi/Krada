@@ -1,11 +1,17 @@
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+DisplayName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=80)]
+CharacterName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=2, max_length=40)
+]
+AnswerText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
 
 
 class MockLoginIn(BaseModel):
-    display_name: str = Field(min_length=2, max_length=80)
+    display_name: DisplayName
 
 
 class MaxLoginIn(BaseModel):
@@ -20,7 +26,7 @@ class SessionOut(BaseModel):
 
 
 class CharacterIn(BaseModel):
-    name: str = Field(min_length=2, max_length=40)
+    name: CharacterName
     class_key: Literal["smith", "mage", "poet", "knight", "druid", "alchemist"]
 
 
@@ -49,7 +55,7 @@ class RaidOut(BaseModel):
 
 
 class AnswerIn(BaseModel):
-    answer: str = Field(min_length=1, max_length=120)
+    answer: AnswerText
 
 
 class RaidResultOut(BaseModel):
@@ -64,9 +70,13 @@ class RaidResultOut(BaseModel):
 
 
 class DashboardOut(BaseModel):
+    """Reconnect-safe snapshot for the Mini App home screen."""
+
     display_name: str
     school_name: str
     class_name: str
     character: CharacterOut | None
     embers: int
     school_score: int
+    # Returning the active raid lets a WebView recover after suspension or process restart.
+    active_raid: RaidOut | None = None

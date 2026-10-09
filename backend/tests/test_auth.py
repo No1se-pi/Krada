@@ -36,3 +36,8 @@ def test_tampering_and_expiry_are_rejected():
 def test_duplicate_parameters_are_rejected():
     with pytest.raises(ValueError, match="duplicate"):
         validate_max_init_data(signed_data() + "&user=evil", "test-token")
+
+
+def test_max_user_requires_integer_platform_id():
+    with pytest.raises(ValueError, match="invalid_max_user"):
+        validate_max_init_data(signed_data(user=json.dumps({"id": "not-an-integer"})), "test-token")

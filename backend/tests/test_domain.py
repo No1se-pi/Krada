@@ -1,7 +1,7 @@
 import pytest
 
 from krada.modules.game.domain import CHARACTER_CLASSES, require_character_class
-from krada.modules.raids.domain import RaidState, resolve_answer, transition
+from krada.modules.raids.domain import RaidState, activate_new_raid, resolve_answer, transition
 
 
 def test_all_initial_classes_are_registered():
@@ -18,6 +18,7 @@ def test_raid_state_machine_rejects_skipping():
     with pytest.raises(ValueError, match="invalid_transition"):
         transition(RaidState.CREATED, RaidState.COMPLETED)
     assert transition(RaidState.ACTIVE, RaidState.COMPLETED) == RaidState.COMPLETED
+    assert activate_new_raid() == RaidState.ACTIVE
 
 
 def test_answer_reward_is_server_determined():
