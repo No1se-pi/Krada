@@ -1,0 +1,1 @@
+"""Kрада application package."""
